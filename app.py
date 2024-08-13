@@ -319,7 +319,16 @@ def main():
 
         with col2:
             if input_type == "Text":
-                user_input = st.text_area("Enter your symptoms or medical condition:")
+                # Initialize session state for user input if it doesn't exist
+                if 'user_input' not in st.session_state:
+                    st.session_state.user_input = ""
+
+                # Use the session state to maintain the user's input
+                user_input = st.text_area("Enter your symptoms or medical condition:", value=st.session_state.user_input)
+                
+                # Update the session state when the user types
+                st.session_state.user_input = user_input
+
                 if st.button("Identify Condition", key="text_button"):
                     if user_input:
                         with st.spinner("Processing... Please be patient."):
