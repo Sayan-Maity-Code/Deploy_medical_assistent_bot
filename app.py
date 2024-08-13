@@ -6,8 +6,7 @@ from duckduckgo_search import DDGS
 import requests
 import base64
 import time
-from st_social_media_links import SocialMediaIcons
-
+import concurrent.futures
 
 
 # Load environment variables
@@ -152,38 +151,45 @@ Be thorough in your evaluation."""
         print(f"Error in reviewing answer: {e}")
         return "Error in reviewing the answer"
 
+
+
 def process_user_request(query=None, image_path=None):
-    if image_path:
-        extracted_text = extract_text_from_image(image_path)
-        if not extracted_text:
-            return "Failed to extract text from document."
-        condition = identify_medical_condition(extracted_text)
-    elif query:
-        condition = identify_medical_condition(query)
-    else:
-        return "No valid input provided."
+    try:
+        if image_path:
+            extracted_text = extract_text_from_image(image_path)
+            if not extracted_text:
+                return "Failed to extract text from document."
+            condition = identify_medical_condition(extracted_text)
+        elif query:
+            condition = identify_medical_condition(query)
+        else:
+            return "No valid input provided."
 
-    if not condition or condition.lower() == "no medical condition identified":
-        return "Could not identify any medical condition."
+        if not condition or condition.lower() == "no medical condition identified":
+            return "Could not identify any medical condition."
 
-    remedy_types = ["home", "Ayurvedic", "homeopathic", "allopathic"]
-    remedies = {}
-    
-    for remedy_type in remedy_types:
-        remedy_description = get_remedy(condition, remedy_type)
-        remedy_images = get_remedy_images(f"{condition} {remedy_type} remedy")
-        remedies[f"{remedy_type}_remedy"] = {
-            "description": remedy_description,
-            "images": remedy_images
-        }
+        remedy_types = ["home", "Ayurvedic", "homeopathic", "allopathic"]
+        remedies = {}
+        
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future_to_remedy = {executor.submit(get_remedy, condition, remedy_type): remedy_type for remedy_type in remedy_types}
+            future_to_images = {executor.submit(get_remedy_images, f"{condition} {remedy_type} remedy"): remedy_type for remedy_type in remedy_types}
+            
+            for future in concurrent.futures.as_completed(future_to_remedy):
+                remedy_type = future_to_remedy[future]
+                remedies[f"{remedy_type}_remedy"] = {"description": future.result()}
+            
+            for future in concurrent.futures.as_completed(future_to_images):
+                remedy_type = future_to_images[future]
+                remedies[f"{remedy_type}_remedy"]["images"] = future.result()
 
-    # Combine all remedies for review
-    all_remedies = "\n\n".join([f"{key}:\n{value['description']}" for key, value in remedies.items()])
-    
-    # Get review from the agent
-    review = review_answer(condition, all_remedies)
+        all_remedies = "\n\n".join([f"{key}:\n{value['description']}" for key, value in remedies.items()])
+        review = review_answer(condition, all_remedies)
 
-    return {"condition": condition, "remedies": remedies, "review": review}
+        return {"condition": condition, "remedies": remedies, "review": review}
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+        return None
 
 def remove_old_uploads():
     upload_dir = "uploads"
@@ -278,10 +284,8 @@ def add_footer():
 def main():
     st.set_page_config(page_title="FriendlyClinic: A Smart & Personalized Medical Assistant", layout="wide")
     
-    # Add custom CSS
     local_css("style.css")
-        
-    # Add background image
+    
     bg_img = add_bg_from_local('background.jpg')
     st.markdown(
         f"""
@@ -305,13 +309,10 @@ def main():
         unsafe_allow_html=True
     )
 
-    
-    # Custom CSS for title
     st.markdown("""
         <h1 class='title'>FriendlyClinic: AI Personalized Medical Assistant</h1>
     """, unsafe_allow_html=True)
 
-    # Create two columns for layout
     col1, col2 = st.columns([1, 3])
 
     with col1:
@@ -321,13 +322,17 @@ def main():
         if input_type == "Text":
             user_input = st.text_area("Enter your symptoms or medical condition:")
             if st.button("Identify Condition", key="text_button"):
-                with st.spinner("Processing... Please be patient."):
-                    result = process_user_request(query=user_input)
-                display_results(result)
+                if user_input:
+                    with st.spinner("Processing... Please be patient."):
+                        result = process_user_request(query=user_input)
+                    if result:
+                        display_results(result)
+                else:
+                    st.warning("Please enter your symptoms or medical condition.")
         else:
             uploaded_file = st.file_uploader("Upload any medical report for query ...", type=["jpg", "jpeg", "png"])
             if uploaded_file is not None:
-                remove_old_uploads()  # Remove previous uploads
+                remove_old_uploads()
                 image_path = os.path.join("uploads", uploaded_file.name)
                 if not os.path.exists("uploads"):
                     os.makedirs("uploads")
@@ -336,12 +341,38 @@ def main():
                 
                 with st.spinner("Processing image... Please be patient."):
                     result = process_user_request(image_path=image_path)
-                
-                display_results(result)
-    
-    # Add the footer with social icons
+                if result:
+                    display_results(result)
+
     add_footer()
 
-# Make sure to call main() at the end of your script
+def display_results(result):
+    if isinstance(result, str):
+        st.error(result)
+    else:
+        st.success(f"Identified Condition: {result['condition']}")
+        
+        temporary_text("DISCLAIMER: The information provided here is for educational purposes only and should not be considered medical advice. Always consult with a qualified healthcare professional before starting any treatment or taking any medication.")
+        
+        for remedy_type, info in result['remedies'].items():
+            remedy_title = remedy_type.replace('_remedy', '').capitalize()
+            with st.expander(f"{remedy_title} Remedies", expanded=True):
+                st.markdown(f"""
+                    <div class="scrollable-content">
+                        {info['description']}
+                    </div>
+                """, unsafe_allow_html=True)
+                if info['images']:
+                    st.write("Remedy Images:")
+                    cols = st.columns(len(info['images']))
+                    for i, url in enumerate(info['images']):
+                        with cols[i]:
+                            st.image(url, width=200)
+                else:
+                    st.info("No images found for this remedy.")
+        
+        st.subheader("Expert Review")
+        st.write(result['review'])
+
 if __name__ == "__main__":
     main()
