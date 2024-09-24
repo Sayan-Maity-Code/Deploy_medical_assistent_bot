@@ -1,6 +1,7 @@
 # FriendlyClinic: AI Personalized Medical Assistant
 
 FriendlyClinic is an innovative AI-powered medical assistant designed to provide personalized health information and remedies based on user-provided symptoms or medical reports. This project aims to bridge the gap between technology and healthcare, offering a user-friendly interface for preliminary medical guidance.
+-[Live link](https://friendlyclinic.streamlit.app)
 
 ## Table of Contents
 - [Features](#features)
